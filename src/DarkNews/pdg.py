@@ -151,3 +151,19 @@ phi = new_particle(name="phi", pdgid=5902, latex_name="\varphi")
 alp = new_particle(name="alp", pdgid=5903, latex_name="a")
 
 ########################################################################################
+
+#Vctor Portal Model New Particles
+chi   = new_particle("chi",   5917)  
+chiPrime = new_particle("chiPrime", 5918) 
+V     = new_particle("V",     5922)  
+
+
+#Meson decay to scalar 
+meson_scalar = new_particle("meson_scalar", 5904)
+
+# Mesons
+piplus  = Particle.from_pdgid(211)
+piminus = Particle.from_pdgid(-211)
+
+Kplus   = Particle.from_pdgid(321)
+Kminus  = Particle.from_pdgid(-321)

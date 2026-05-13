@@ -549,6 +549,40 @@ def diff_gamma_Ni_to_Nj_ell_ell(PS, process, diagrams=["total"]):
         # return the sum of all diagrams requested
         return diff_dr_terms["total"]
 
+#added for meson to scalar decay
+def diff_gamma_M_to_lnu_phi(PS, process):
+    """
+    Differential decay rate for:
+        M -> l + nu + phi
+
+    Parameters
+    ----------
+    PS : list
+        [t,u,v,c3,phi34]
+    process : ChargedMesonThreeBodyDecay
+    """
+
+    t, u, v, c3, phi34 = PS
+
+    mM   = process.m_parent
+    ml   = process.mm
+    mnu  = process.mp
+    mphi = process.m_daughter
+
+    # --------------------------------------------------
+    # PLACEHOLDER MATRIX ELEMENT
+    # Replace this with your analytic amplitude later
+    # --------------------------------------------------
+
+    Msq = np.ones_like(t)
+
+    # Standard 3-body phase-space prefactor
+    phase_space = 1.0 / (32.0 * mM**2 * (2*np.pi)**4)
+    flux_factor = 1.0 / (2.0 * mM)
+
+    return flux_factor * phase_space * Msq
+
+
 
 # class HeavyNu:
 #     def __init__(self,params,particle):

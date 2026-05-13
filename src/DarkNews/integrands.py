@@ -101,6 +101,52 @@ class UpscatteringXsec(vg.BatchIntegrand):
         return self.int_dic
 
 
+class MesonThreeBodyDecayIntegrands:
+       """Integrand for the MesonThreeBodyDecay 3-body phase space sampler."""
+
+       def __init__(self, dim, dec_case):
+           self.dim = dim
+           self.dec_case = dec_case
+           # norm dict used by SIREN/DarkNews infrastructure
+           self.norm = {"diff_decay_rate_0": 1.0}
+
+       def __call__(self, x, n_mc):
+           """
+           x[0] = E_nu / E_nu_max           (uniform in [0,1])
+           x[1] = (E_phi - E_phi_min) / dE  (uniform in [0,1])
+
+           Returns dict with "diff_decay_rate_0" key (per-event weight array).
+           """
+           dec = self.dec_case
+           m_M   = dec.m_parent
+           m_l   = dec.m_lepton
+           m_phi = dec.m_mediator
+
+           E_nu  = x[:, 0] * dec.E_nu_max
+           # Compute E_phi limits for each E_nu sample
+           results = np.zeros(n_mc)
+           for i in range(n_mc):
+               lims = dec._E_phi_limits(E_nu[i])
+               if lims[0] is None:
+                   results[i] = 0.0
+                   continue
+               E_phi_min, E_phi_max = lims
+               dE = E_phi_max - E_phi_min
+               if dE <= 0.0:
+                   results[i] = 0.0
+                   continue
+               E_phi = E_phi_min + x[i, 1] * dE
+               # Jacobian: E_nu_max × dE
+               jacob = dec.E_nu_max * dE
+               m2 = dec._matel_sq(E_nu[i], E_phi)
+               results[i] = m2 / (32.0 * np.pi**3 * m_M) * jacob
+           # Build 4-momenta from (E_nu, E_phi) for event storage
+           # ... (follow HNLDecay's momentum reconstruction convention)
+           return {"diff_decay_rate_0": results}
+
+
+
+
 class HNLDecay(vg.BatchIntegrand):
     def __init__(self, dim, dec_case, diagram="total"):
         """
@@ -650,6 +696,42 @@ def get_momenta_from_vegas_samples(vsamples, MC_case):
             four_momenta["P_decay_ell_minus"] = P2LAB_decay
             four_momenta["P_decay_ell_plus"] = P3LAB_decay
             four_momenta["P_decay_N_daughter"] = P4LAB_decay
+
+    elif isinstance(MC_case.decay_case, proc.ChargedMesonThreeBodyDecay):
+
+        ###########################
+        # Charged meson 3-body decay
+        M_decay_samples = {
+            "unit_t": vsamples[2],
+            "unit_u": vsamples[3],
+            "unit_c3": vsamples[4],
+            "unit_phi34": vsamples[5],
+        }
+
+        # M(k1) -> l(k2) nu(k3) phi(k4)
+        masses_decay = {
+            "m1": MC_case.decay_case.m_parent,      # Meson
+            "m2": MC_case.decay_case.mm,            # Charged lepton
+            "m3": MC_case.decay_case.mp,            # Neutrino
+            "m4": MC_case.decay_case.m_daughter,    # Phi / ALP
+        }
+
+        (
+            P1LAB_decay,
+            P2LAB_decay,
+            P3LAB_decay,
+            P4LAB_decay,
+        ) = phase_space.three_body_decay(
+            M_decay_samples,
+            boost=boost_scattered_N,
+            **masses_decay,
+            rng=MC_case.rng,
+        )
+
+        four_momenta["P_decay_M_parent"] = P1LAB_decay
+        four_momenta["P_decay_lepton"]   = P2LAB_decay
+        four_momenta["P_decay_neutrino"] = P3LAB_decay
+        four_momenta["P_decay_phi"]      = P4LAB_decay
 
     elif MC_case.decays_to_singlephoton:
 

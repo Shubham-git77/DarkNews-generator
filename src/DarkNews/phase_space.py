@@ -29,7 +29,7 @@ def upscattering_Q2max(Enu, mHNL, M):
                     (s) ** (2)
                     + (
                         -1 * (M) ** (2) * ((mHNL) ** (2) + 2 * s)
-                        + (-1 * (M) ** (2) + s) * (((M) ** (4) + ((((mHNL) ** (2) + -1 * s)) ** (2) + -2 * (M) ** (2) * ((mHNL) ** (2) + s)))) ** (1 / 2)
+                        + (-1 * (M) ** (2) + s) * max((((M) ** (4) + ((((mHNL) ** (2) + -1 * s)) ** (2) + -2 * (M) ** (2) * ((mHNL) ** (2) + s)))), 0.0) ** (1 / 2)
                     )
                 )
             )
@@ -81,7 +81,13 @@ def upscattering_Q2min_s(Enu, mHNL, M):
     if r < 1e-3:
         return (m) ** (2) * ((-1 + (m) ** (2))) ** (-2) * (r) ** (4) * s
 
-    # Otherwise, compute the full expression
+    # Otherwise, compute the full expression.
+    # Clamp the Källén function to zero before taking sqrt —
+    # it can go slightly negative due to floating-point errors near threshold,
+    # which produces a Python complex and crashes C++ (pybind11 cast failure).
+    kallen = max(((-1 + (m) ** (2))) ** (2) + (-2 * (1 + (m) ** (2)) * (r) ** (2) + (r) ** (4)), 0.0)
+    kallen_sqrt = kallen ** (1 / 2)
+
     q2min = (
         1
         / 2
@@ -92,8 +98,8 @@ def upscattering_Q2min_s(Enu, mHNL, M):
                 + (
                     -1 * (r) ** (2)
                     + (
-                        -1 * ((((-1 + (m) ** (2))) ** (2) + (-2 * (1 + (m) ** (2)) * (r) ** (2) + (r) ** (4)))) ** (1 / 2)
-                        + (m) ** (2) * (-2 + (-1 * (r) ** (2) + ((((-1 + (m) ** (2))) ** (2) + (-2 * (1 + (m) ** (2)) * (r) ** (2) + (r) ** (4)))) ** (1 / 2)))
+                        -1 * kallen_sqrt
+                        + (m) ** (2) * (-2 + (-1 * (r) ** (2) + kallen_sqrt))
                     )
                 )
             )
@@ -112,8 +118,8 @@ upscattering_Q2min = np.vectorize(upscattering_Q2min_s)
 def three_body_umax(m1, m2, m3, m4, t):
     return 1 / 4 * (((m1) ** (2) + ((m2) ** (2) + (-1 * (m3) ** (2) + -1 * (m4) ** (2))))) ** (2) * (t) ** (-1) + -1 * (
         (
-            ((-1 * (m2) ** (2) + 1 / 4 * (t) ** (-1) * (((m2) ** (2) + (-1 * (m3) ** (2) + t))) ** (2))) ** (1 / 2)
-            + -1 * ((-1 * (m4) ** (2) + 1 / 4 * (t) ** (-1) * ((-1 * (m1) ** (2) + ((m4) ** (2) + t))) ** (2))) ** (1 / 2)
+            max((-1 * (m2) ** (2) + 1 / 4 * (t) ** (-1) * (((m2) ** (2) + (-1 * (m3) ** (2) + t))) ** (2)), 0.0) ** (1 / 2)
+            + -1 * max((-1 * (m4) ** (2) + 1 / 4 * (t) ** (-1) * ((-1 * (m1) ** (2) + ((m4) ** (2) + t))) ** (2)), 0.0) ** (1 / 2)
         )
     ) ** (2)
 
@@ -121,8 +127,8 @@ def three_body_umax(m1, m2, m3, m4, t):
 def three_body_umin(m1, m2, m3, m4, t):
     return 1 / 4 * (((m1) ** (2) + ((m2) ** (2) + (-1 * (m3) ** (2) + -1 * (m4) ** (2))))) ** (2) * (t) ** (-1) + -1 * (
         (
-            ((-1 * (m2) ** (2) + 1 / 4 * (t) ** (-1) * (((m2) ** (2) + (-1 * (m3) ** (2) + t))) ** (2))) ** (1 / 2)
-            + ((-1 * (m4) ** (2) + 1 / 4 * (t) ** (-1) * ((-1 * (m1) ** (2) + ((m4) ** (2) + t))) ** (2))) ** (1 / 2)
+            max((-1 * (m2) ** (2) + 1 / 4 * (t) ** (-1) * (((m2) ** (2) + (-1 * (m3) ** (2) + t))) ** (2)), 0.0) ** (1 / 2)
+            + max((-1 * (m4) ** (2) + 1 / 4 * (t) ** (-1) * ((-1 * (m1) ** (2) + ((m4) ** (2) + t))) ** (2)), 0.0) ** (1 / 2)
         )
     ) ** (2)
 
@@ -152,9 +158,9 @@ def two_to_two_scatter(samples, m1=1.0, m2=0.0, m3=1.0, m4=0.0, rng=np.random.ra
     E3CM = (s + m3**2 - m4**2) / 2.0 / np.sqrt(s)
     E4CM = (s - m3**2 + m4**2) / 2.0 / np.sqrt(s)
 
-    p1CM = np.sqrt(E1CM**2 - m1**2)
-    p2CM = np.sqrt(E2CM**2 - m2**2)
-    p3CM = np.sqrt(E3CM**2 - m3**2)
+    p1CM = np.sqrt(np.maximum(E1CM**2 - m1**2, 0.0))
+    p2CM = np.sqrt(np.maximum(E2CM**2 - m2**2, 0.0))
+    p3CM = np.sqrt(np.maximum(E3CM**2 - m3**2, 0.0))
     # p4CM = np.sqrt(E4CM**2 - m4**2)
 
     # if massless proj and elastic in one, watch out for cancellations
@@ -228,7 +234,7 @@ def two_body_decay(samples, boost=False, m1=1, m2=0, m3=0, rng=np.random.random)
     E2CM_decay = np.full_like(cost, (m1**2 + m2**2 - m3**2) / 2.0 / m1)
     E3CM_decay = np.full_like(cost, (m1**2 - m2**2 + m3**2) / 2.0 / m1)
 
-    p2CM_decay = np.full_like(cost, np.sqrt(E2CM_decay**2 - m2**2))
+    p2CM_decay = np.full_like(cost, np.sqrt(max(E2CM_decay[0]**2 - m2**2, 0.0)))
     # p3CM_decay = np.full_like(cost, np.sqrt(E3CM_decay**2 - m3**2))
 
     # azimuthal angle of k2
@@ -289,15 +295,15 @@ def three_body_decay(samples, boost=False, m1=1, m2=0, m3=0, m4=0, rng=np.random
     # from MATHEMATICA
     uplus = 1 / 4 * (((m1) ** (2) + ((m2) ** (2) + (-1 * (m3) ** (2) + -1 * (m4) ** (2))))) ** (2) * (t) ** (-1) + -1 * (
         (
-            ((-1 * (m2) ** (2) + 1 / 4 * (t) ** (-1) * (((m2) ** (2) + (-1 * (m3) ** (2) + t))) ** (2))) ** (1 / 2)
-            + -1 * ((-1 * (m4) ** (2) + 1 / 4 * (t) ** (-1) * ((-1 * (m1) ** (2) + ((m4) ** (2) + t))) ** (2))) ** (1 / 2)
+            np.sqrt(np.maximum(-1 * (m2) ** (2) + 1 / 4 * (t) ** (-1) * (((m2) ** (2) + (-1 * (m3) ** (2) + t))) ** (2), 0.0))
+            + -1 * np.sqrt(np.maximum(-1 * (m4) ** (2) + 1 / 4 * (t) ** (-1) * ((-1 * (m1) ** (2) + ((m4) ** (2) + t))) ** (2), 0.0))
         )
     ) ** (2)
     # from MATHEMATICA
     uminus = 1 / 4 * (((m1) ** (2) + ((m2) ** (2) + (-1 * (m3) ** (2) + -1 * (m4) ** (2))))) ** (2) * (t) ** (-1) + -1 * (
         (
-            ((-1 * (m2) ** (2) + 1 / 4 * (t) ** (-1) * (((m2) ** (2) + (-1 * (m3) ** (2) + t))) ** (2))) ** (1 / 2)
-            + ((-1 * (m4) ** (2) + 1 / 4 * (t) ** (-1) * ((-1 * (m1) ** (2) + ((m4) ** (2) + t))) ** (2))) ** (1 / 2)
+            np.sqrt(np.maximum(-1 * (m2) ** (2) + 1 / 4 * (t) ** (-1) * (((m2) ** (2) + (-1 * (m3) ** (2) + t))) ** (2), 0.0))
+            + np.sqrt(np.maximum(-1 * (m4) ** (2) + 1 / 4 * (t) ** (-1) * ((-1 * (m1) ** (2) + ((m4) ** (2) + t))) ** (2), 0.0))
         )
     ) ** (2)
     if "unit_u" in samples.keys():
@@ -316,8 +322,8 @@ def three_body_decay(samples, boost=False, m1=1, m2=0, m3=0, m4=0, rng=np.random
     E4CM_decay = (m1**2 + m4**2 - t) / 2.0 / m1
 
     # p2CM_decay = np.sqrt(E2CM_decay * E2CM_decay - m2**2)
-    p3CM_decay = np.sqrt(E3CM_decay * E3CM_decay - m3**2)
-    p4CM_decay = np.sqrt(E4CM_decay * E4CM_decay - m4**2)
+    p3CM_decay = np.sqrt(np.maximum(E3CM_decay * E3CM_decay - m3**2, 0.0))
+    p4CM_decay = np.sqrt(np.maximum(E4CM_decay * E4CM_decay - m4**2, 0.0))
 
     # Polar angle of P_3
     if "unit_c3" in samples.keys():
