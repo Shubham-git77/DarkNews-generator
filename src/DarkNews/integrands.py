@@ -697,7 +697,7 @@ def get_momenta_from_vegas_samples(vsamples, MC_case):
             four_momenta["P_decay_ell_plus"] = P3LAB_decay
             four_momenta["P_decay_N_daughter"] = P4LAB_decay
 
-    elif isinstance(MC_case.decay_case, proc.ChargedMesonThreeBodyDecay):
+    elif isinstance(MC_case.decay_case, proc.MesonThreeBodyDecay):
 
         ###########################
         # Charged meson 3-body decay

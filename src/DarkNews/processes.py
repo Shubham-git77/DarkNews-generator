@@ -495,10 +495,10 @@ class MesonThreeBodyDecay:
         self.mediator_type = getattr(TheoryModel, "meson_scalar_type", "scalar")
  
         # meson decay constant and CKM mixing
-        if self.meson_parent == pdg.pion_plus or self.meson_parent == pdg.pion_minus:
+        if self.meson_parent == pdg.piplus or self.meson_parent == pdg.piminus:
             self.f_M  = getattr(const, "fpi",   0.1307)   # GeV (PDG 2020)
             self.V_Mq = getattr(const, "Vud",   0.9737)   # CKM Vud
-        elif self.meson_parent == pdg.kaon_plus or self.meson_parent == pdg.kaon_minus:
+        elif self.meson_parent == pdg.Kplus or self.meson_parent == pdg.Kminus:
             self.f_M  = getattr(const, "fkaon", 0.1598)   # GeV (PDG 2020)
             self.V_Mq = getattr(const, "Vus",   0.2245)   # CKM Vus
         else:
@@ -594,43 +594,36 @@ class MesonThreeBodyDecay:
         return self.m_parent**2 + self.m_mediator**2 - 2.0 * self.m_parent * E_phi
  
     def _matel_sq_scalar(self, E_nu, E_phi):
-        """
-        Spin-summed |M|² for the SCALAR coupling  g_μ φ ℓ̄ℓ:
- 
-            |M_S|² = 4 G_F² f_M² g_μ² m_ℓ² (m_M² - t) / (t - m_ℓ²)²
- 
-        Derivation sketch:
-          The amplitude reduces to (after using EOM + helicity projection):
-            M_S  ∝  m_ℓ × ū(p_ν) (p̸_l + p̸_ϕ) P_L v(p_l)  /  D
-          where  D = t - m_ℓ²  is the off-shell lepton propagator denominator.
-          Squaring and tracing yields the formula above.
-        """
+        """Spin-summed |M|² for SCALAR coupling ([Carlson-Rislow] Eq. 25)."""
         m_M = self.m_parent
         m_l = self.m_lepton
- 
-        t = self._t_inv(E_nu)
-        D = t - m_l**2
-        if D <= 0.0:
-            return 0.0
- 
-        # m_M² - t = 2 m_M E_ν  (cross-check)
-        numerator = 4.0 * m_l**2 * (m_M**2 - t)   # = 8 m_l² m_M E_ν
-        return self._C2 * numerator / D**2
- 
-    def _matel_sq_pseudo(self, E_nu, E_phi):
-        m_l = self.m_lepton
- 
+        m_phi = self.m_mediator
         t = self._t_inv(E_nu)
         u = self._u_inv(E_phi)
         D = t - m_l**2
-        if D <= 0.0 or u < m_l**2:
+        if D <= 0.0:
             return 0.0
+        common = (t + u - m_phi**2) * t * D \
+            - (t**2 - m_l**2 * m_M**2) * (t + m_l**2 - m_phi**2)
+        mass_term = m_l**2 * t * (m_M**2 - t)
+        T_S = 8.0 * (common + 2.0 * mass_term)
+        return max(self._C2 * T_S / D**2, 0.0)
  
-        # Two contributions
-        term_momentum = 2.0 * t**2 * (u - m_l**2)
-        term_mass     = 4.0 * m_l**2 * (self.m_parent**2 - t)
- 
-        return self._C2 * (term_momentum + term_mass) / D**2
+    def _matel_sq_pseudo(self, E_nu, E_phi):
+        """Spin-summed |M|² for PSEUDOSCALAR ([Carlson-Rislow] Eq. 25, sign flip)."""
+        m_M = self.m_parent
+        m_l = self.m_lepton
+        m_phi = self.m_mediator
+        t = self._t_inv(E_nu)
+        u = self._u_inv(E_phi)
+        D = t - m_l**2
+        if D <= 0.0:
+            return 0.0
+        common = (t + u - m_phi**2) * t * D \
+            - (t**2 - m_l**2 * m_M**2) * (t + m_l**2 - m_phi**2)
+        mass_term = m_l**2 * t * (m_M**2 - t)
+        T_P = 8.0 * (common - 2.0 * mass_term)  # note: MINUS
+        return max(self._C2 * T_P / D**2, 0.0)
  
     def _matel_sq(self, E_nu, E_phi):
         """Dispatch to scalar or pseudoscalar matrix element."""
@@ -645,49 +638,31 @@ class MesonThreeBodyDecay:
     def total_width(self):
         from scipy.integrate import dblquad, quad
  
-        prefactor = 1.0 / (32.0 * np.pi**3 * self.m_parent)
+        prefactor = 1.0 / (64.0 * np.pi**3 * self.m_parent)
         m_M = self.m_parent
  
-        if self.mediator_type == "scalar":
-            def integrand_1d(E_nu):
-                lims = self._E_phi_limits(E_nu)
-                if lims[0] is None:
-                    return 0.0
-                E_phi_min, E_phi_max = lims
-                delta_E_phi = E_phi_max - E_phi_min
-                if delta_E_phi <= 0.0:
-                    return 0.0
-                return self._matel_sq_scalar(E_nu, 0.0) * delta_E_phi  # E_phi arg unused
- 
-            result, _ = quad(
-                integrand_1d, 0.0, self.E_nu_max,
-                limit=200, epsrel=1e-4
-            )
-            return max(result * prefactor, 0.0)
- 
-        else:
-            E_phi_lo = self.m_mediator
-            E_phi_hi = self.E_phi_max
- 
-            def integrand_2d(E_phi, E_nu):
-                lims = self._E_phi_limits(E_nu)
-                if lims[0] is None:
-                    return 0.0
-                if E_phi < lims[0] or E_phi > lims[1]:
-                    return 0.0
-                E_l = m_M - E_nu - E_phi
-                if E_l < self.m_lepton:
-                    return 0.0
-                return self._matel_sq_pseudo(E_nu, E_phi)
- 
-            result, _ = dblquad(
-                integrand_2d,
-                0.0, self.E_nu_max,          # outer: E_nu limits
-                lambda E_nu: self._E_phi_limits(E_nu)[0] or 0.0,  # inner lower
-                lambda E_nu: self._E_phi_limits(E_nu)[1] or 0.0,  # inner upper
-                epsrel=1e-3
-            )
-            return max(result * prefactor, 0.0)
+        E_phi_lo = self.m_mediator
+        E_phi_hi = self.E_phi_max
+
+        def integrand_2d(E_phi, E_nu):
+            lims = self._E_phi_limits(E_nu)
+            if lims[0] is None:
+                return 0.0
+            if E_phi < lims[0] or E_phi > lims[1]:
+                return 0.0
+            E_l = m_M - E_nu - E_phi
+            if E_l < self.m_lepton:
+                return 0.0
+            return self._matel_sq(E_nu, E_phi)
+
+        result, _ = dblquad(
+            integrand_2d,
+            0.0, self.E_nu_max,          # outer: E_nu limits
+            lambda E_nu: self._E_phi_limits(E_nu)[0] or 0.0,  # inner lower
+            lambda E_nu: self._E_phi_limits(E_nu)[1] or 0.0,  # inner upper
+            epsrel=1e-3
+        )
+        return max(result * prefactor, 0.0)
  
     def differential_width(self, momenta):
         P_meson_LAB, P_lepton_LAB, P_nu_LAB, P_phi_LAB = momenta
@@ -707,7 +682,7 @@ class MesonThreeBodyDecay:
  
         matel2 = self._matel_sq(E_nu, E_phi)
  
-        return matel2 / (32.0 * np.pi**3 * self.m_parent)
+        return matel2 / (64.0 * np.pi**3 * self.m_parent)
  
     def SamplePS(
         self,
@@ -723,7 +698,7 @@ class MesonThreeBodyDecay:
     ):
         
         DIM = 2
-        batch_f = integrands.MesonThreeBodyDecay(dim=DIM, dec_case=self)
+        batch_f = integrands.MesonThreeBodyDecayIntegrands(dim=DIM, dec_case=self)
  
         if existing_integrator is None:
             integ = vg.Integrator(DIM * [[0.0, 1.0]])
@@ -1061,14 +1036,14 @@ class ChiPrimeDecay(DarkNewsDecay):
     # analytic width 
 
     def _compute_width(self) -> float:
-        """Γ(χ' → χ V₁) in GeV."""
+        """Γ(χ' → χ V₁) in GeV. (g_D²/48π) M λ^{3/2}."""
         M  = self.m_chi_prime
         m1 = self.m_chi
         m2 = self.m_V1
         p  = _two_body_p_cm(M, m1, m2)
         if p <= 0.0:
             return 0.0
-        return self.g_D**2 * p**3 / (6.0 * np.pi * m2**2 * M**2)
+        return self.g_D**2 * p**3 / (6.0 * np.pi * M**2)
 
     # SIREN interface 
 
@@ -1269,33 +1244,46 @@ def _three_body_decay_rate_phi(m_phi: float, g_mu: float,
     mm  = _M_MU
     mphi = m_phi
 
-    results = np.zeros_like(E_phi_vals, dtype=float)
-    E_phi_min = mphi
-    E_phi_max = (M**2 + mphi**2 - mm**2) / (2.0 * M)
+    # Overall coupling prefactor: _C2 = (G_F f_pi V_ud g_mu)^2 / 2
+    _C2 = (_GF * _fpi * _Vud * g_mu)**2 / 2.0
 
-    if E_phi_max <= E_phi_min:
+    results = np.zeros_like(E_phi_vals, dtype=float)
+    E_phi_min_global = mphi
+    E_phi_max_global = (M**2 + mphi**2 - mm**2) / (2.0 * M)
+
+    if E_phi_max_global <= E_phi_min_global:
         return results   # kinematically forbidden
 
     for i, Ep in enumerate(E_phi_vals):
-        if Ep <= E_phi_min or Ep >= E_phi_max:
+        if Ep <= E_phi_min_global or Ep >= E_phi_max_global:
             results[i] = 0.0
             continue
 
-        # p_φ magnitude
-        pp = np.sqrt(max(Ep**2 - mphi**2, 0.0))
-        if pp <= 0.0:
-            results[i] = 0.0
-            continue
-        Eq  = M - Ep
-        q2  = Eq**2 - pp**2   # = m_q² (invariant mass of μν system)
+        # u invariant for this E_phi: u = M^2 + m_phi^2 - 2 M E_phi
+        u_val = M**2 + mphi**2 - 2.0 * M * Ep
+
+        # Invariant mass squared of the (mu + nu) system
+        # q^2 = (P - k_phi)^2 = M^2 + m_phi^2 - 2 M E_phi = u_val
+        q2 = u_val
         if q2 <= mm**2:
             results[i] = 0.0
             continue
 
-        mq  = np.sqrt(q2)   # invariant mass of (μ + ν) system
-        E_mu_min = (q2 + mm**2) / (2.0 * mq) - np.sqrt(max(Eq**2 - q2, 0.0)) * (mq**2 - mm**2) / (2.0 * q2)
-        E_mu_max = (q2 + mm**2) / (2.0 * mq) + np.sqrt(max(Eq**2 - q2, 0.0)) * (mq**2 - mm**2) / (2.0 * q2)
+        mq = np.sqrt(q2)   # invariant mass of (mu + nu) system
 
+        # E_mu* in the (mu+nu) CM frame
+        E_mu_star = (q2 + mm**2) / (2.0 * mq)
+        p_mu_star = np.sqrt(max(E_mu_star**2 - mm**2, 0.0))
+
+        # Lorentz boost of the (mu+nu) system in the pion rest frame
+        # E_{mu+nu} = M - Ep,  p_{mu+nu} = sqrt((M-Ep)^2 - q2)
+        E_q_pion = M - Ep
+        p_q_pion = np.sqrt(max(E_q_pion**2 - q2, 0.0))
+        gamma_boost = E_q_pion / mq
+        beta_gamma  = p_q_pion / mq
+
+        E_mu_max = gamma_boost * E_mu_star + beta_gamma * p_mu_star
+        E_mu_min = gamma_boost * E_mu_star - beta_gamma * p_mu_star
         E_mu_min = max(E_mu_min, mm)
 
         if E_mu_max <= E_mu_min:
@@ -1303,23 +1291,23 @@ def _three_body_decay_rate_phi(m_phi: float, g_mu: float,
             continue
 
         def integrand(Emu):
-            # Four-dot products in pion rest frame
-            # p_ν = p_total − p_φ − p_μ  (energy: M − Ep − Emu)
             Enu = M - Ep - Emu
-            if Enu < 0:
+            if Enu < 0.0:
                 return 0.0
-
-            pi_mu  = M * Emu
-            pi_phi = M * Ep
-            pi_nu  = M * Enu
-            mu_phi = 0.5 * (M**2 - 2*M*Enu - mm**2 - mphi**2)
-            nu_phi = 0.5 * (M**2 - 2*M*Emu - mphi**2)
-
-            amp2 = 2.0 * (
-                pi_nu * (mm**2 - mu_phi)
-                + pi_mu * nu_phi
-            )
-            return max(amp2, 0.0)
+            # Dalitz invariants
+            t = M**2 - 2.0 * M * Enu          # t = (k_mu + k_phi)^2
+            D = t - mm**2
+            if D <= 0.0:
+                return 0.0
+            # u is fixed by E_phi for this outer loop, but recompute for clarity
+            u = M**2 + mphi**2 - 2.0 * M * Ep
+            # Carlson-Rislow Eq. 25, scalar trace (T_S)
+            common = (t + u - mphi**2) * t * D \
+                - (t**2 - mm**2 * M**2) * (t + mm**2 - mphi**2)
+            mass_term = mm**2 * t * (M**2 - t)
+            T_S = 8.0 * (common + 2.0 * mass_term)
+            val = _C2 * T_S / D**2
+            return max(val, 0.0)
 
         try:
             val, _ = _sci_int.quad(integrand, E_mu_min, E_mu_max,
@@ -1329,8 +1317,8 @@ def _three_body_decay_rate_phi(m_phi: float, g_mu: float,
 
         results[i] = max(val, 0.0)
 
-    # Overall prefactor:  g_μ² |V_ud|² G_F² f_π² / (128 π³)
-    prefactor = g_mu**2 * _Vud**2 * _GF**2 * _fpi**2 / (128.0 * np.pi**3)
+    # PDG three-body prefactor: 1 / (64 pi^3 M)
+    prefactor = 1.0 / (64.0 * np.pi**3 * M)
     return prefactor * results
 
 
