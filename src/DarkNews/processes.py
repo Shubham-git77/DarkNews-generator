@@ -1398,3 +1398,141 @@ def build_phi_flux(
     return siren.distributions.TabulatedFluxDistribution(
         E_thresh, E_max, list(E_phi_out), list(phi_flux), physically_normalized
     )
+    
+    
+#Meson Decay Process
+
+
+# Physical constants
+_GF   = 1.16638e-5   # GeV^{-2}
+_Vud  = 0.9737
+_fpi  = 0.1307       # GeV
+_M_PI = 0.13957      # GeV
+_M_MU = 0.10566      # GeV
+_M_NU = 0.0
+ 
+ 
+
+class MesonSimpleDecay(DarkNewsDecay):
+    """
+    Two-body SM decay  π⁺ → μ⁺ + ν_μ.
+
+    Decay width (SM, tree-level):
+        Γ = G_F² f_π² |V_ud|² m_π m_μ² (1 − m_μ²/m_π²)² / (8π)
+
+    Phase space is isotropic in the pion rest frame, so no VEGAS
+    integrator is needed.  SampleFinalState samples cos θ and φ
+    uniformly and boosts the daughters to the lab frame.
+
+    Follows the ChiPrimeDecay pattern — inherits DarkNewsDecay (C++)
+    and implements the SIREN interface directly.
+    """
+
+    # SM constants
+    G_F  = 1.1663788e-5   # GeV^-2
+    f_pi = 0.1307          # GeV  (charged pion decay constant)
+    V_ud = 0.97373         # CKM |V_ud|
+
+    # Particle masses (GeV)
+    M_PI = 0.13957039
+    M_MU = 0.10565837
+    M_NU = 0.0
+
+    def __init__(self, nu_parent, nu_daughter):
+        _require_siren("MesonSimpleDecay")
+        DarkNewsDecay.__init__(self)      # C++ base constructor
+
+        self.nu_parent   = nu_parent
+        self.nu_daughter = nu_daughter
+
+        # Hard-code PDG IDs — safe regardless of whether nu_parent is an
+        # integer or a DarkNews particle object.
+        self.pdgid_pion = 211    # π⁺
+        self.pdgid_mu   = -13   # μ⁺
+        self.pdgid_nu   = 14    # ν_μ
+
+        self.secondaries = [nu_daughter]   # kept for DarkNews compatibility
+
+        # Cache the analytic total width
+        self._total_width_val = self._compute_width()
+
+    # ------------------------------------------------------------------ #
+    #  Physics                                                             #
+    # ------------------------------------------------------------------ #
+
+    def _compute_width(self):
+        """Γ(π⁺ → μ⁺ ν_μ) in GeV."""
+        r = (self.M_MU / self.M_PI) ** 2
+        return (self.G_F**2 * self.f_pi**2 * self.V_ud**2
+                * self.M_PI * self.M_MU**2 * (1.0 - r)**2
+                / (8.0 * np.pi))
+
+    def total_width(self):
+        return self._total_width_val
+
+    def differential_width(self, momenta):
+        # Isotropic 2-body: dΓ/dΩ = Γ / (4π)
+        return self._total_width_val / (4.0 * np.pi)
+
+    # ------------------------------------------------------------------ #
+    #  SIREN interface                                                     #
+    # ------------------------------------------------------------------ #
+
+    def GetPossibleSignatures(self):
+        sig = dataclasses.InteractionSignature()
+        sig.primary_type    = Particle.ParticleType(self.pdgid_pion)
+        sig.target_type     = Particle.ParticleType.Decay
+        sig.secondary_types = [
+            Particle.ParticleType(self.pdgid_mu),
+            Particle.ParticleType(self.pdgid_nu),
+        ]
+        return [sig]
+
+    def GetPossibleSignaturesFromParent(self, primary_type):
+        if int(primary_type) == self.pdgid_pion:
+            return self.GetPossibleSignatures()
+        return []
+
+    def TotalDecayWidth(self, arg1):
+        if isinstance(arg1, dataclasses.InteractionRecord):
+            primary = arg1.signature.primary_type
+        else:
+            primary = arg1
+        return self._total_width_val if int(primary) == self.pdgid_pion else 0.0
+
+    def TotalDecayWidthForFinalState(self, record):
+        if int(record.signature.primary_type) != self.pdgid_pion:
+            return 0.0
+        return self._total_width_val
+
+    def DifferentialDecayWidth(self, record):
+        if int(record.signature.primary_type) != self.pdgid_pion:
+            return 0.0
+        return self._total_width_val / (4.0 * np.pi)
+
+    def save_to_table(self, table_subdir=None):
+        pass   # no tables needed for analytic sampling
+
+    def SampleFinalState(self, record, random):
+        """
+        Sample π⁺ → μ⁺ + ν_μ isotropically in the pion rest frame,
+        then boost both daughters to the lab frame.
+        """
+        P_parent = np.array(record.primary_momentum)
+        p_cm     = _two_body_p_cm(self.M_PI, self.M_MU, self.M_NU)
+
+        cos_theta = random.Uniform(-1.0, 1.0)
+        phi       = random.Uniform(0.0, 2.0 * np.pi)
+
+        # μ⁺ and ν_μ are back-to-back in the rest frame
+        P_mu = _boost_to_lab(P_parent, p_cm,  cos_theta,        phi,          self.M_MU)
+        P_nu = _boost_to_lab(P_parent, p_cm, -cos_theta, phi + np.pi,         self.M_NU)
+
+        for sec in record.get_secondary_particle_records():
+            if int(sec.type) == self.pdgid_mu:
+                sec.four_momentum = P_mu
+                sec.mass          = self.M_MU
+            elif int(sec.type) == self.pdgid_nu:
+                sec.four_momentum = P_nu
+                sec.mass          = self.M_NU
+        return record
